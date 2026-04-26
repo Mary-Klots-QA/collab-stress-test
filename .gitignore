@@ -6,3 +6,6 @@ node_modules/
 /blob-report/
 /playwright/.cache/
 /playwright/.auth/
+
+# Playwright MCP session artifacts (snapshots/screenshots from interactive DOM exploration)
+/.playwright-mcp/
