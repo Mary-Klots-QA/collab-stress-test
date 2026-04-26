@@ -1,3 +1,9 @@
+/**
+ * Scenario 1: Specification-driven test
+ * Generated from explicit requirements.
+ * Tests basic multi-user consistency (happy path).
+ */
+
 import { test, expect, chromium } from '@playwright/test';
 
 // Etherpad sets only the `name` attribute on its editor iframes — never `id`.

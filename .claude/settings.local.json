@@ -1,7 +1,13 @@
 {
   "permissions": {
     "allow": [
-      "WebFetch(domain:etherpad.wikimedia.org)"
+      "WebFetch(domain:etherpad.wikimedia.org)",
+      "mcp__playwright__browser_evaluate",
+      "mcp__playwright__browser_wait_for",
+      "mcp__playwright__browser_press_key",
+      "mcp__playwright__browser_navigate",
+      "mcp__playwright__browser_tabs",
+      "Bash(npx playwright *)"
     ]
   }
 }

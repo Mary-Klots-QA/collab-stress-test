@@ -2,8 +2,7 @@
 
 Live prompting log from an AI-assisted SDET project. Each entry records the
 prompt, the constraint applied, and what it produced. Kept as evidence of
-methodological prompting decisions — not just outputs — for use in technical
-interview contexts.
+methodological prompting decisions.
 
 ---
 
@@ -18,6 +17,19 @@ interview contexts.
 | **"Simplest version that still proves the concept"** | After root cause fixed — removes noise from the solution |
 | **"Give me reasoning before changing"** | Before any non-obvious decision — ensures the change is justified |
 | **"What are you assuming vs. what have you verified?"** | N-user failure triage — forces the AI to flag uncertainty |
+
+---
+
+## Two test-generation approaches in this project
+
+**Spec-driven** (collab-edit): You fully specify the behaviour — user count, parallelism
+mechanism, assertion direction. Claude generates the implementation. Fast for well-understood
+scenarios; risk is that locators come from training-data memory, which may be stale or wrong.
+
+**DOM-first** (format-delete-conflict, same-position-concurrent): Claude is given access to
+the live application via Playwright MCP, inspects the actual DOM, then generates tests from
+what it observed. Eliminates the class of selector failures that consumed most of the
+debugging time in this project.
 
 ---
 
@@ -119,26 +131,7 @@ load-bearing lines.
 
 ---
 
-## 5. Documentation generation
-
-**Context:** Project was stable. Needed to capture context for future sessions
-and interview presentation.
-
-> "Write a CLAUDE.md that captures: what this project does, the test target URL
-> and why, how multi-context works, key decisions, what has failed and why, what
-> still needs to be built. Should CLAUDE.md be so long and detailed? Give me
-> reasoning before changing."
-
-**Result:** CLAUDE.md focused on non-obvious knowledge only (selector gotcha,
-dead-end theories, debugging rules). Standard Playwright knowledge omitted.
-
-**Lesson:** For AI context files, write only what the AI cannot derive from the
-code itself. Explaining standard patterns wastes tokens and makes the file harder
-to scan.
-
----
-
-## 6. Refactor to parameterised N-user function
+## 5. Refactor to parameterised N-user function
 
 **Context:** Test was hardcoded for Alice and Bob. Needed to scale to arbitrary
 user counts for interview demo.
@@ -157,7 +150,7 @@ asserts) in the prompt is faster than describing the desired output in prose.
 
 ---
 
-## 7. Investigate N-user failure — ONE fix
+## 6. Investigate N-user failure — ONE fix
 
 **Context:** 2-user test passed; 5- and 10-user tests failed. Failure showed
 character-interleaved output that never resolved even after 15 s of retries.
@@ -178,3 +171,45 @@ the setup loop with a 300 ms propagation wait before the next user types.
 uncertainty. The 15-second assertion retry in the error log was the key evidence
 that ruled out a timing fix — worth pointing at directly rather than letting the
 AI guess.
+
+---
+
+## 7. DOM-first test generation via Playwright MCP
+
+**Context:** Generate a test for a new adversarial scenario (same-position
+concurrent typing) without pre-specifying any locators.
+
+**Approach:** Two-phase. Give Claude access to the live application via MCP and
+ask it to explore the actual DOM before writing any code. Then specify the scenario.
+
+> "You have access to a live Playwright browser via MCP.
+> Open two instances of Etherpad. Explore the editor — inspect the DOM, find where
+> text is entered, find any visible sync indicators or connection status elements.
+> Then generate a test for THIS scenario: both users type at the same cursor position
+> simultaneously at maximum speed for 5 seconds. After typing stops, assert that both
+> users see identical content — no dropped characters, no duplicates.
+> Base your locators on what you actually find in the DOM, not on assumptions. Show me
+> the locators you chose and why."
+
+**What the live inspection found (not assumed):**
+- `body#innerdocbody` — the text container; `contenteditable="false"` (Etherpad's own input layer)
+- `#editbar.disabledtoolbar` — a more precise "editor ready" signal than `ace_outer` attachment
+- `#connectivity .connected` / `.userdup` — session-state indicators in the main page DOM
+- WMF welcome text has 2 uppercase A's → assertions must be scoped to content after a seed marker
+
+**Debugging in the same session:**
+Test failed because `/A/g` on the full document matched the welcome text A's, always returning
+`countA + 2`. Cause confirmed by live `evaluate()` call: `text.match(/A/g).length === 2` on a
+blank pad. Fixed by scoping to `finalText.split(SEED)[1]`. One fix, one run, all 3 browsers passed.
+
+**Why DOM-first over spec-driven:**
+
+| | Spec-driven | DOM-first |
+|---|---|---|
+| Locator source | Claude's training data | Live DOM inspection |
+| Risk | Selectors may be stale or wrong | Requires live app access |
+| Root cause of past failures | `#ace_outer` from memory, not verified | Not applicable |
+
+Give Claude MCP access to the live app whenever generating tests for an application
+you haven't hand-inspected. The locator quality difference eliminates the class of
+failures that consumed most of the debugging time in this project.
