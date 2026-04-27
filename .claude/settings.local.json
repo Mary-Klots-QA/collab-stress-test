@@ -7,7 +7,9 @@
       "mcp__playwright__browser_press_key",
       "mcp__playwright__browser_navigate",
       "mcp__playwright__browser_tabs",
-      "Bash(npx playwright *)"
+      "Bash(npx playwright *)",
+      "Bash(npx tsc *)",
+      "Bash(./node_modules/.bin/tsc --noEmit)"
     ]
   }
 }
