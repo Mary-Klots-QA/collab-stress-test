@@ -7,8 +7,6 @@ Etherpad instance. Three test files cover different OT failure modes:
 - **format-delete-conflict** — concurrent bold + deletion on overlapping text; both clients converge
 - **same-position-concurrent** — both users type at the exact same cursor offset at maximum speed; asserts convergence with zero character drops
 
-Built as an SDET interview demo.
-
 ---
 
 ## Non-obvious decisions

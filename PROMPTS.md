@@ -39,13 +39,13 @@ debugging time in this project.
 
 **Constraints applied:** Specified the exact parallelism mechanism (`Promise.all`),
 the typing strategy (slowly, per character), the assertion direction (both users
-see both strings), and required interview-ready comments.
+see both strings), and required comments.
 
 > "Write a Playwright TypeScript test that opens two browser contexts in the same
 > test as two different users. Both navigate to the same Etherpad URL. User A types
 > 'Hello from Alice' slowly, user B types 'Hello from Bob' slowly — in parallel
 > using Promise.all. After both finish, assert that both users see both pieces of
-> text in the pad. Add helpful comments so I can explain this code in an interview.
+> text in the pad. Add helpful comments so I can understand this code.
 > Then tell me where I should inspect the output if it fails."
 
 **Result:** Working scaffold. The test structure and helpers (`typeSlowly`,
@@ -68,7 +68,7 @@ patch accumulation and kept each hypothesis independent.
 > "The test failed with: Click locator('#ace_outer')... collab-edit.spec.ts:100.
 > Check the error files. What went wrong and what is ONE fix? Explain the problem
 > and explain the fix. Why does this specific problem happen in collaborative
-> editors? Explain in plain English so I can describe it in an interview."
+> editors? Explain in plain English."
 
 → Identified `waitUntil: 'networkidle'` as incorrect for Socket.IO apps. Fix
 applied. Notification overlay theory investigated (wrong).
@@ -134,7 +134,7 @@ load-bearing lines.
 ## 5. Refactor to parameterised N-user function
 
 **Context:** Test was hardcoded for Alice and Bob. Needed to scale to arbitrary
-user counts for interview demo.
+user counts.
 
 **Constraint applied:** Specified the function contract — takes `numUsers`, creates
 N contexts, each types distinct content, all assert consistency.

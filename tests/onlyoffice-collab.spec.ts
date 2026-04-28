@@ -364,7 +364,7 @@ test(
   'canvas architecture: document text is not accessible via standard DOM queries — explicit proof',
   async ({ browser }) => {
     // This test documents a hard architectural limit, not a bug.
-    // It exists so that during an interview the claim "we cannot read canvas text
+    // It exists so that the claim "we cannot read canvas text
     // via DOM" is backed by a passing test, not just an assertion in conversation.
 
     const page = await (await browser.newContext()).newPage();
