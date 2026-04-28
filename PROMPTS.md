@@ -213,3 +213,84 @@ blank pad. Fixed by scoping to `finalText.split(SEED)[1]`. One fix, one run, all
 Give Claude MCP access to the live app whenever generating tests for an application
 you haven't hand-inspected. The locator quality difference eliminates the class of
 failures that consumed most of the debugging time in this project.
+
+---
+
+## 8. OnlyOffice pivot — DOM-first exploration of a canvas-based editor
+
+**Context:** Extend the project to cover OnlyOffice DocumentServer (the actual target
+system for the IONOS Euro-Office SDET role). No prior knowledge of OnlyOffice's internal
+DOM structure. A spec-driven approach would generate plausible-looking but wrong selectors —
+OnlyOffice's editing surface is nothing like Etherpad's, and the failure mode is worse.
+
+**Constraint applied:** No test code until after live DOM inspection. Claude given access
+to a local DocumentServer via Playwright MCP and asked to explore and report findings.
+Code generation was explicitly blocked until the report was reviewed.
+
+**Exact prompts used:**
+
+> "You have access to a live Playwright browser via MCP. I have OnlyOffice DocumentServer
+> running at http://localhost/example. Do the following exploration and report back — do
+> NOT generate any test code yet: navigate to the example page, open the sample document,
+> inspect the DOM carefully (editing surface structure, ready-state selector, text input
+> mechanism, save state indicators, WebSocket status). Take an ARIA snapshot. Try clicking
+> inside the editor and typing one character. Show me exactly what you found. Quote actual
+> DOM elements and attributes. Do NOT assume anything from training data."
+
+Then, after receiving and reviewing the DOM report:
+
+> "Based on your DOM findings above, create a new test file: tests/onlyoffice-collab.spec.ts.
+> Base ALL selectors on what you actually observed. Flag any selector you're not 100% certain
+> about with a // VERIFY: comment."
+
+**What the live inspection found (not assumed):**
+
+- **Editing surface: canvas, not DOM.** `canvas#id_viewer` (2174×1052 px) renders the document.
+  `canvas#id_viewer_overlay` receives mouse events. Zero `contenteditable` elements.
+  No text nodes containing document content — anywhere.
+
+- **Keyboard input shim.** `<textarea id="area_id">` at `left:-100px top:-50px`, fully
+  transparent. The ONLY input path. Its parent `#area_id_parent` is repositioned
+  dynamically to track cursor x/y on screen. Confirmed: pressing `X` with `area_id` focused
+  produced `area_id.value = "X"`, cursor moved 17.5 px, undo button enabled.
+
+- **Two distinct status signals — NEITHER behaves as expected from documentation:**
+  - `label#label-pages` → "Page 1 of 1" once the canvas is populated. The correct "editor
+    loaded" signal. Correct only because it was observed directly; documentation would have
+    suggested `#label-action`.
+  - `label#label-action` → empty on fresh load. Shows "Loading data..." during WebSocket
+    handshake, `""` when ready, "All changes saved" post-edit. NOT a load signal — using
+    it as one times out every test before the first edit is made.
+
+- **Cross-frame access trap.** `page.waitForFunction()` + `iframe.contentDocument` is
+  transiently `null` during frame load → silent poll failure for 90 s. Correct pattern:
+  `page.frame({ name: 'frameEditor' }).waitForFunction()`.
+
+- **Three-state `label-action` revealed only under parallel load.** When three tests ran
+  in parallel with cold document loads, Test 1 saw `label-action = "Loading data..."` —
+  a state not visible in the sequential MCP session. Required two live test runs to discover.
+
+**Key lesson:**
+
+Canvas-based editors break the core assumption of DOM-based test automation — that
+document content exists as readable text nodes. A spec-driven approach generates
+assertions like `body.innerText` or `document.querySelector('.editor').textContent`
+that return `""` silently. No locator error fires; the test appears to pass; the
+assertion is vacuously true. This failure mode is strictly worse than the Etherpad
+`#ace_outer` bug, which at least produced a visible timeout.
+
+The MCP DOM-first approach revealed the canvas architecture in the first inspection
+call. Every selector in `onlyoffice-collab.spec.ts` came from live observation.
+The three-state `label-action` behaviour — and the correct two-step ready signal —
+was only discoverable by running tests against a live server and reading the failures.
+
+| | Etherpad | OnlyOffice |
+|---|---|---|
+| Wrong selector failure mode | Locator timeout (visible error) | Empty string assertion (silent pass) |
+| Content assertion | `innerText` on `body#innerdocbody` | No DOM text — needs download API or WS interception |
+| Ready signal | `#editbar` loses `.disabledtoolbar` | `#label-pages` contains "Page" AND `#label-action` not "Loading" |
+| Discovered via | GitHub source (`ace.js`) | Live MCP DOM inspection + parallel test run |
+
+The same discipline — MCP-first, never assume selectors — applies more critically to
+OnlyOffice than to Etherpad. The surface area of wrong assumptions is larger, and the
+wrong assumptions fail silently.

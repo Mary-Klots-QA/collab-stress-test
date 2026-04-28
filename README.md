@@ -1,77 +1,79 @@
 # collab-stress-test
 
-Playwright + TypeScript suite that stress-tests concurrent editing on a real Etherpad instance,
-proving the server's Operational Transform (OT) engine merges concurrent edit streams without
-data loss or divergence.
+Playwright + TypeScript suite stress-testing OT-based collaborative editors.
+Etherpad is the instrumented proxy — text in real DOM, convergence directly assertable.
+OnlyOffice is the actual target: canvas-based, which breaks standard DOM assertions.
+This project shows both the methodology and where it breaks down.
+Built as an SDET demo for the IONOS Euro-Office team.
+---
+## What it tests
 
-Built as an SDET interview demo.
+### Etherpad
+
+| Test | Scenario | Assertion |
+|---|---|---|
+| **collab-edit** | N users type in parallel (2, 5, 10 users) | Every user sees every other user's text via `innerText` |
+| **format-delete-conflict** | Concurrent bold + deletion on overlapping text | Both clients converge to identical DOM state |
+| **same-position-concurrent** | Both users type at the same cursor offset at max speed for 5 s | Identical text on both clients; zero characters dropped |
+
+### OnlyOffice DocumentServer
+
+| Test | Scenario | Assertion |
+|---|---|---|
+| **editor loads** | Navigate to document; wait for co-auth session to initialise | Canvas present; status past "Loading data..." phase |
+| **two-user concurrent** | Two users type distinct strings in parallel | Both changesets committed; undo stack enabled on both clients |
+| **canvas limitation proof** | Type a string; attempt DOM text readback | Proves the text is NOT in the DOM — documents the gap and the alternatives |
+
+---
+## Methodology: DOM-first, never spec-driven
+
+All OnlyOffice selectors came from Claude inspecting the live app via Playwright MCP —
+not from documentation or assumptions. See [`PROMPTS.md`](PROMPTS.md) for the full log.
+
+For Etherpad, assumptions produced `#ace_outer` (wrong — `name` attribute, not `id`).
+For OnlyOffice they produce DOM text assertions returning `""` silently — no error, just
+a test that always passes vacuously against a canvas element.
+
+---
+## OnlyOffice-specific challenges
+
+**Canvas rendering.** Text lives on `canvas#id_viewer`, not in DOM nodes. Convergence
+paths: `.docx` download API, WebSocket changeset interception, or internal JS SDK.
+See [`CLAUDE.md`](CLAUDE.md).
+
+**JS/C++ bridge.** `doctrenderer` runs V8 inside C++. A corruption bug that survives
+browser-side debugging may live in the C++ layer. Playwright traces cover the browser;
+`documentserver/logs/` covers the other.
 
 ---
 
-## What it tests
+## What I'd build next on the real system
 
-| Test file | Scenario | Assertion |
-|---|---|---|
-| **collab-edit** | N users type distinct content in parallel (2, 5, 10 users) | Every user sees every other user's text |
-| **format-delete-conflict** | Concurrent bold formatting + deletion on the same text range | Both clients converge to identical state |
-| **same-position-concurrent** | Both users type at the same cursor offset at maximum speed for 5 s | Both clients converge; zero characters dropped |
+**k6 + WebSocket bot swarm.** Playwright at 50 users is 5 GB RAM. OnlyOffice speaks
+WebSocket + JSON changesets; k6 reaches the same server code at ~2 MB per user.
+Latency SLOs and throughput limits live here, not in browser tests.
 
-A failing test means the server dropped, duplicated, or mismerged one user's changes.
+**WebSocket OT interception.** `page.on('websocket')` exposes every changeset frame.
+Asserting both operations appear in the merge log beats any DOM check and is
+rendering-architecture independent.
+
+**LLM-powered failure classification.** Playwright traces + server logs → Claude API
+→ OT bug / UI change / infra flake / convergence failure. One engineer reviews
+classifications instead of reading every trace — "one engineer at team scale."
+
+**CI on every PR** with multi-user scenarios blocking merge. Load tests nightly.
 
 ---
 
 ## How to run
 
-**Prerequisites:** Node.js 18+
-
 ```bash
-npm install
-npx playwright install chromium   # first time only
+npm install && npx playwright install chromium
+npx playwright test                                   # all tests, all browsers
+npx playwright test --project=chromium                # faster iteration
+npx playwright test tests/onlyoffice-collab.spec.ts   # OnlyOffice only
+npx playwright show-report                            # traces on failure
 ```
 
-**Run all tests (three browsers):**
-```bash
-npx playwright test
-```
-
-**Run Chromium only (faster for iteration):**
-```bash
-npx playwright test --project=chromium
-```
-
-**See the HTML report after a run:**
-```bash
-npx playwright show-report
-```
-
-**Replay a failure trace step-by-step:**
-Open the HTML report → click the failed test → click **Trace**.
-
-> Tests run against `etherpad.wikimedia.org`. The server can take 60–90 s to
-> initialise the WebSocket connection for a new pad; the test timeout is set to
-> 120 s to account for this. Run on a stable network connection.
-
----
-
-## How the tests were built
-
-**Spec-driven** (`collab-edit`): requirements fully specified in the prompt — user count,
-parallelism mechanism, assertion direction. Claude generated the implementation. Fast for
-well-understood scenarios; risk is that locators come from training-data memory.
-
-**DOM-first** (`format-delete-conflict`, `same-position-concurrent`): Claude was given
-access to the live application via Playwright MCP, inspected the actual DOM, then generated
-tests from observed structure. Eliminates selector bugs caused by assumptions about element
-ids and attributes. See `PROMPTS.md` for the full methodology log.
-
----
-
-## What's next
-
-| Area | Description |
-|---|---|
-| More edit types | Concurrent deletions, overlapping formatting, reconnect after disconnect |
-| Local target | Run against a local `docker compose` Etherpad to remove external latency and flakiness |
-| Latency assertions | Measure and assert the time between last keystroke and sync becoming visible |
-| Pad cleanup | Delete test pads after each run via the Etherpad HTTP API |
-| Event-driven sync | Replace `waitForTimeout(2_000)` in format-delete-conflict with convergence polling |
+> Etherpad tests run against `etherpad.wikimedia.org`.
+> OnlyOffice tests require DocumentServer at `http://localhost`.
