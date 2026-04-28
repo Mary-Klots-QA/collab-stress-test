@@ -9,7 +9,16 @@
       "mcp__playwright__browser_tabs",
       "Bash(npx playwright *)",
       "Bash(npx tsc *)",
-      "Bash(./node_modules/.bin/tsc --noEmit)"
+      "Bash(./node_modules/.bin/tsc --noEmit)",
+      "mcp__playwright__browser_close",
+      "Bash(pkill -f \"mcp-chrome\")",
+      "mcp__playwright__browser_take_screenshot",
+      "mcp__playwright__browser_snapshot",
+      "mcp__playwright__browser_click",
+      "Bash(npx --no-install tsc --noEmit)",
+      "Bash(node_modules/@playwright/test/node_modules/.bin/tsc --noEmit)",
+      "Bash(pkill -9 -f \"chrome\")",
+      "mcp__playwright__browser_type"
     ]
   }
 }

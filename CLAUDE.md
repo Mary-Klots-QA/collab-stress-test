@@ -108,6 +108,139 @@ expect((afterSeed.match(/A/g) ?? []).length).toBe(countA);
 
 ---
 
+## OnlyOffice vs Etherpad — architectural differences for test automation
+
+### Canvas vs DOM: the selector strategy changes entirely
+
+Etherpad renders document text into real DOM nodes:
+
+```
+iframe[name="ace_outer"] → iframe[name="ace_inner"] → body#innerdocbody
+```
+
+`innerText` on `body#innerdocbody` returns the full document text. Every convergence
+assertion in the Etherpad tests works because content exists as readable DOM nodes.
+
+OnlyOffice renders to canvas — one iframe boundary, then pixels:
+
+```
+iframe[name="frameEditor"]
+  ├── canvas#id_viewer          ← document painted here as pixels
+  ├── canvas#id_viewer_overlay  ← receives mouse events
+  └── textarea#area_id          ← off-screen keyboard shim (left:-100px top:-50px, transparent)
+```
+
+There are no text nodes. `document.querySelector('anything').textContent` returns `""`.
+This is not a bug — it is the architecture. Every selector you would write for a DOM-rendered
+editor silently fails here with an empty string, not an error.
+
+### Verified ready-state selectors (confirmed live, 2026-04-27)
+
+`label#label-action` has three observed states on a fresh load:
+
+| Text | Meaning |
+|---|---|
+| `"Loading data..."` | WebSocket handshake in progress — NOT ready |
+| `""` | Session established, no edits yet — READY |
+| `"All changes saved"` | Post-edit autosave confirmed — READY |
+
+`label#label-pages` shows `"Page N of M"` once the document is rendered into the canvas.
+Empty during SDK initialisation; populates within ~3 s of navigation.
+
+Both conditions must be true before sending input:
+
+```typescript
+await page.frame({ name: 'frameEditor' })!.waitForFunction(
+  ({ pageId, actionId }) => {
+    const pageText   = document.getElementById(pageId)?.textContent?.trim()   ?? '';
+    const actionText = document.getElementById(actionId)?.textContent?.trim() ?? '';
+    return pageText.includes('Page') && !actionText.includes('Loading');
+  },
+  { pageId: 'label-pages', actionId: 'label-action' },
+  { timeout: 90_000 },
+);
+```
+
+**Critical trap:** `page.waitForFunction()` runs in the outer page context. Accessing
+`iframe.contentDocument` from there is transiently `null` while the frame is loading —
+the poll silently returns `false` for the entire timeout. Always use
+`page.frame({ name: 'frameEditor' }).waitForFunction()` to evaluate inside the frame's
+own document context.
+
+### Why standard DOM text verification doesn't work — and what to use instead
+
+You cannot assert `"Hello from Alice"` appeared in the document by querying the DOM.
+Three alternatives, in order of implementation cost:
+
+**1. Save-triggered file read via the download API** (highest fidelity)
+
+The example app exposes `/example/download?fileName=...`. After `#label-action` shows
+"All changes saved", fetch the `.docx`, unzip it (it's a ZIP), and search `word/document.xml`
+for the expected string. This reads what DocumentServer actually persisted on disk.
+
+**2. Screenshot pixel diffing**
+
+`expect(page).toHaveScreenshot()` catches visual regressions but cannot assert that a
+specific string was merged correctly. Brittle to antialiasing, font rendering, and cursor
+position. Use for rendering regression tests, not OT convergence.
+
+**3. WebSocket OT operation interception** (highest precision for collab assertions)
+
+DocumentServer sends JSON-encoded changesets over WebSocket. Intercept them:
+
+```typescript
+page.on('websocket', ws => {
+  ws.on('framereceived', ({ payload }) => {
+    // payload contains JSON with OT changeset operations
+    // Assert both users' insert operations appear in the merge log
+  });
+});
+```
+
+This asserts convergence at the protocol layer with no UI dependency. It is also the
+layer where OT bugs actually live. Requires understanding the DocumentServer wire format.
+
+### The JS/C++ bridge — what it means for root-cause analysis
+
+DocumentServer runs `doctrenderer`, which embeds V8 (Chrome's JS engine) inside a C++
+process. The edit pipeline spans two runtimes:
+
+```
+Browser JS (WASM/JS SDK) → WebSocket → Node.js server → C++ doctrenderer (V8)
+```
+
+When a test fails with missing or corrupted text, the root cause can be in any layer.
+Playwright traces show the browser JS side only. The C++ side logs to
+`documentserver/logs/` on the host. A failure that looks like "text went missing" from
+the test perspective may be a V8 GC pause in the C++ layer causing a missed changeset
+acknowledgement — nothing visible in the browser trace.
+
+Rule of thumb: after two failed fixes from the browser side, read the DocumentServer logs.
+
+### Bot swarm testing — why Playwright is the wrong tool for load
+
+Playwright launches full Chromium instances: ~100 MB RAM each, ~50 ms to spawn. At 50
+concurrent users you are at 5 GB RAM and the test runner is the bottleneck, not the server.
+
+OnlyOffice's protocol is WebSocket + JSON changesets. The browser is not required for
+load. A k6 swarm targets the same server logic at ~2 MB per virtual user:
+
+```javascript
+// k6 WebSocket load test sketch
+import ws from 'k6/ws';
+export default function () {
+  ws.connect('ws://localhost/doc/DOCID', {}, (socket) => {
+    socket.on('open', () => socket.send(JSON.stringify({ type: 'auth', token: JWT })));
+    socket.on('message', msg => { /* record changeset ack latency */ });
+  });
+}
+```
+
+Use Playwright for: correctness tests, rendering assertions, convergence of 2–5 clients.
+Use k6 + WebSocket clients for: 50+ users, latency SLOs, changeset throughput limits.
+
+---
+
 ## Debugging rule of thumb
 
 When a test against an external service fails repeatedly on the same step:
