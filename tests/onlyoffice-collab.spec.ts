@@ -66,7 +66,7 @@
  *   All helpers in this file use these patterns, not cross-frame contentDocument.
  */
 
-import { test, expect, chromium } from '@playwright/test';
+import { test, expect } from '@playwright/test';
 import type { Page } from '@playwright/test';
 
 const BASE_URL   = 'http://localhost/example';
@@ -202,277 +202,262 @@ async function waitForSaved(page: Page, timeout = 60_000): Promise<void> {
 
 test(
   'editor loads: iframe attaches, canvas is present, and save label reaches "All changes saved"',
-  async () => {
-    const browser = await chromium.launch();
-    try {
-      const page = await (await browser.newContext()).newPage();
-      // 'load' not 'networkidle': DocumentServer holds a persistent WebSocket
-      // that fires traffic indefinitely — networkidle never resolves.
-      await page.goto(editorUrl('uid-test-load'), { waitUntil: 'load' });
-      await waitForEditorReady(page);
+  async ({ browser }) => {
+    const page = await (await browser.newContext()).newPage();
+    // 'load' not 'networkidle': DocumentServer holds a persistent WebSocket
+    // that fires traffic indefinitely — networkidle never resolves.
+    await page.goto(editorUrl('uid-test-load'), { waitUntil: 'load' });
+    await waitForEditorReady(page);
 
-      // After waitForEditorReady, page.frame() returns the live Frame object.
-      // frame.evaluate() runs JS in the frame's own document context — no
-      // cross-frame contentDocument traversal needed.
-      const frame = page.frame({ name: 'frameEditor' });
-      expect(frame).not.toBeNull();
+    // After waitForEditorReady, page.frame() returns the live Frame object.
+    // frame.evaluate() runs JS in the frame's own document context — no
+    // cross-frame contentDocument traversal needed.
+    const frame = page.frame({ name: 'frameEditor' });
+    expect(frame).not.toBeNull();
 
-      // The canvas render surface must exist. If absent, the editor SDK failed
-      // to initialise — no input test makes sense without it.
-      const canvasPresent = await frame!.evaluate(
-        (id) => !!document.getElementById(id),
-        CANVAS_VIEWER_ID,
-      );
-      expect(canvasPresent).toBe(true);
+    // The canvas render surface must exist. If absent, the editor SDK failed
+    // to initialise — no input test makes sense without it.
+    const canvasPresent = await frame!.evaluate(
+      (id) => !!document.getElementById(id),
+      CANVAS_VIEWER_ID,
+    );
+    expect(canvasPresent).toBe(true);
 
-      // The keyboard input shim must be present. Without it, no text can enter
-      // the document — there is no other input path into the canvas engine.
-      const capturePresent = await frame!.evaluate(
-        (id) => !!document.getElementById(id),
-        KEYBOARD_CAPTURE_ID,
-      );
-      expect(capturePresent).toBe(true);
+    // The keyboard input shim must be present. Without it, no text can enter
+    // the document — there is no other input path into the canvas engine.
+    const capturePresent = await frame!.evaluate(
+      (id) => !!document.getElementById(id),
+      KEYBOARD_CAPTURE_ID,
+    );
+    expect(capturePresent).toBe(true);
 
-      // label-pages should show the page count — the signal waitForEditorReady
-      // waited for. Explicit assertion here gives a readable diff on failure.
-      const pageLabel = await frame!.evaluate(
-        (id) => document.getElementById(id)?.textContent?.trim() ?? null,
-        PAGE_LABEL_ID,
-      );
-      expect(pageLabel).toMatch(/^Page \d+ of \d+$/);
+    // label-pages should show the page count — the signal waitForEditorReady
+    // waited for. Explicit assertion here gives a readable diff on failure.
+    const pageLabel = await frame!.evaluate(
+      (id) => document.getElementById(id)?.textContent?.trim() ?? null,
+      PAGE_LABEL_ID,
+    );
+    expect(pageLabel).toMatch(/^Page \d+ of \d+$/);
 
-      // label-action confirms the co-authoring session has passed its init phase.
-      // Three observed states: "Loading data..." (init), "" (ready, no edits),
-      // "All changes saved" (ready, post-edit autosave). After waitForEditorReady,
-      // "Loading data..." must NOT be present — the other two are both valid.
-      const actionLabel = await frame!.evaluate(
-        (id) => document.getElementById(id)?.textContent?.trim() ?? '',
-        SAVE_STATUS_ID,
-      );
-      expect(actionLabel).not.toContain('Loading');
+    // label-action confirms the co-authoring session has passed its init phase.
+    // Three observed states: "Loading data..." (init), "" (ready, no edits),
+    // "All changes saved" (ready, post-edit autosave). After waitForEditorReady,
+    // "Loading data..." must NOT be present — the other two are both valid.
+    const actionLabel = await frame!.evaluate(
+      (id) => document.getElementById(id)?.textContent?.trim() ?? '',
+      SAVE_STATUS_ID,
+    );
+    expect(actionLabel).not.toContain('Loading');
 
-      // Screenshot as evidence of the fully loaded editor state.
-      await page.screenshot({ path: 'test-results/onlyoffice-ready-state.png' });
-    } finally {
-      await browser.close();
-    }
+    // Screenshot as evidence of the fully loaded editor state.
+    await page.screenshot({ path: 'test-results/onlyoffice-ready-state.png' });
   },
 );
 
 
 test(
   'two-user concurrent typing: both edits reach the server and autosave completes on both clients',
-  async () => {
+  async ({ browser }) => {
     // Timestamps make this run's edits distinct in server logs even though
     // we cannot read them back from the canvas (see Test 3 for why).
     const ts        = Date.now();
     const aliceText = `ALICE${ts}`;
     const bobText   = `BOB${ts}`;
 
-    const browser = await chromium.launch();
-    try {
-      // Two independent contexts = two isolated sessions with distinct cookies
-      // and localStorage. DocumentServer sees uid-alice and uid-bob as separate
-      // co-authors on the same document — the same pattern as the Etherpad N-user tests.
-      const alice = await (await browser.newContext()).newPage();
-      const bob   = await (await browser.newContext()).newPage();
+    // Two independent contexts = two isolated sessions with distinct cookies
+    // and localStorage. DocumentServer sees uid-alice and uid-bob as separate
+    // co-authors on the same document — the same pattern as the Etherpad N-user tests.
+    const alice = await (await browser.newContext()).newPage();
+    const bob   = await (await browser.newContext()).newPage();
 
-      // 'load' not 'networkidle': DocumentServer holds a persistent WebSocket
-      // that fires traffic indefinitely — networkidle never resolves.
-      await Promise.all([
-        alice.goto(editorUrl('uid-alice'), { waitUntil: 'load' }),
-        bob.goto(editorUrl('uid-bob'),     { waitUntil: 'load' }),
-      ]);
+    // 'load' not 'networkidle': DocumentServer holds a persistent WebSocket
+    // that fires traffic indefinitely — networkidle never resolves.
+    await Promise.all([
+      alice.goto(editorUrl('uid-alice'), { waitUntil: 'load' }),
+      bob.goto(editorUrl('uid-bob'),     { waitUntil: 'load' }),
+    ]);
 
-      // Wait for both editors to be fully live before starting concurrent edits.
-      // Skipping this risks one client being mid-handshake when the other's
-      // changesets arrive — exactly the class of race condition these tests probe.
-      await Promise.all([
-        waitForEditorReady(alice),
-        waitForEditorReady(bob),
-      ]);
+    // Wait for both editors to be fully live before starting concurrent edits.
+    // Skipping this risks one client being mid-handshake when the other's
+    // changesets arrive — exactly the class of race condition these tests probe.
+    await Promise.all([
+      waitForEditorReady(alice),
+      waitForEditorReady(bob),
+    ]);
 
-      // Concurrent typing via Promise.all — this is what stresses the OT merge logic.
-      // typeInEditor presses Ctrl+End first so each user appends at the end of the
-      // document rather than colliding at the same character offset.
-      await Promise.all([
-        typeInEditor(alice, aliceText),
-        typeInEditor(bob,   bobText),
-      ]);
+    // Concurrent typing via Promise.all — this is what stresses the OT merge logic.
+    // typeInEditor presses Ctrl+End first so each user appends at the end of the
+    // document rather than colliding at the same character offset.
+    await Promise.all([
+      typeInEditor(alice, aliceText),
+      typeInEditor(bob,   bobText),
+    ]);
 
-      // Wait for both clients to flush all changesets to DocumentServer.
-      // "All changes saved" on both sides means:
-      //   (a) the local OT changeset was sent over WebSocket
-      //   (b) the server acknowledged the merge
-      //   (c) the autosave write to disk completed
-      //
-      // ── Convergence assertion: why this is weaker than the Etherpad version ──
-      //
-      // Etherpad (waitForConvergence): polls until both clients show identical
-      //   innerText — a direct string equality check between both DOM surfaces.
-      //
-      // OnlyOffice (this test): asserts both clients committed to the server.
-      //   We CANNOT assert "both clients display both strings" because the
-      //   document text lives on canvas#id_viewer, not in DOM text nodes.
-      //
-      //   To reach the same assertion strength as the Etherpad version, two paths:
-      //
-      //   Path A — OnlyOffice internal JS SDK:
-      //     const text = await alice.frame({ name: 'frameEditor' })!.evaluate(() => {
-      //       // VERIFY: exact global varies by DocumentServer version
-      //       return (window as any).DE?.GetDocumentContent?.();
-      //     });
-      //     expect(text).toContain(aliceText);
-      //     expect(text).toContain(bobText);
-      //
-      //   Path B — save-and-download (endpoint confirmed: /example/download?fileName=...):
-      //     const res = await alice.request.get(`${BASE_URL}/download?fileName=${SAMPLE_DOC}`);
-      //     // .docx is a ZIP; word/document.xml contains raw paragraph text
-      //     // Parse ZIP and search XML for aliceText and bobText
-      await Promise.all([
-        waitForSaved(alice),
-        waitForSaved(bob),
-      ]);
+    // Wait for both clients to flush all changesets to DocumentServer.
+    // "All changes saved" on both sides means:
+    //   (a) the local OT changeset was sent over WebSocket
+    //   (b) the server acknowledged the merge
+    //   (c) the autosave write to disk completed
+    //
+    // ── Convergence assertion: why this is weaker than the Etherpad version ──
+    //
+    // Etherpad (waitForConvergence): polls until both clients show identical
+    //   innerText — a direct string equality check between both DOM surfaces.
+    //
+    // OnlyOffice (this test): asserts both clients committed to the server.
+    //   We CANNOT assert "both clients display both strings" because the
+    //   document text lives on canvas#id_viewer, not in DOM text nodes.
+    //
+    //   To reach the same assertion strength as the Etherpad version, two paths:
+    //
+    //   Path A — OnlyOffice internal JS SDK:
+    //     const text = await alice.frame({ name: 'frameEditor' })!.evaluate(() => {
+    //       // VERIFY: exact global varies by DocumentServer version
+    //       return (window as any).DE?.GetDocumentContent?.();
+    //     });
+    //     expect(text).toContain(aliceText);
+    //     expect(text).toContain(bobText);
+    //
+    //   Path B — save-and-download (endpoint confirmed: /example/download?fileName=...):
+    //     const res = await alice.request.get(`${BASE_URL}/download?fileName=${SAMPLE_DOC}`);
+    //     // .docx is a ZIP; word/document.xml contains raw paragraph text
+    //     // Parse ZIP and search XML for aliceText and bobText
+    await Promise.all([
+      waitForSaved(alice),
+      waitForSaved(bob),
+    ]);
 
-      // ── Undo button state as a convergence proxy ────────────────────────────
-      // The undo button starts disabled and becomes enabled the moment the OT
-      // engine registers the first edit on that client. Both being enabled
-      // confirms both clients processed at least one keystroke through the
-      // OT pipeline — the strongest DOM-accessible convergence signal available
-      // in a canvas editor without accessing the internal SDK.
-      const aliceFrame = alice.frame({ name: 'frameEditor' });
-      const bobFrame   = bob.frame({ name: 'frameEditor' });
-      expect(aliceFrame).not.toBeNull();
-      expect(bobFrame).not.toBeNull();
+    // ── Undo button state as a convergence proxy ────────────────────────────
+    // The undo button starts disabled and becomes enabled the moment the OT
+    // engine registers the first edit on that client. Both being enabled
+    // confirms both clients processed at least one keystroke through the
+    // OT pipeline — the strongest DOM-accessible convergence signal available
+    // in a canvas editor without accessing the internal SDK.
+    const aliceFrame = alice.frame({ name: 'frameEditor' });
+    const bobFrame   = bob.frame({ name: 'frameEditor' });
+    expect(aliceFrame).not.toBeNull();
+    expect(bobFrame).not.toBeNull();
 
-      const aliceUndoEnabled = await aliceFrame!.evaluate(
-        (sel) => {
-          const btn = document.querySelector(sel) as HTMLButtonElement | null;
-          return btn !== null && !btn.disabled;
-        },
-        UNDO_BTN_SEL,
-      );
+    const aliceUndoEnabled = await aliceFrame!.evaluate(
+      (sel) => {
+        const btn = document.querySelector(sel) as HTMLButtonElement | null;
+        return btn !== null && !btn.disabled;
+      },
+      UNDO_BTN_SEL,
+    );
 
-      const bobUndoEnabled = await bobFrame!.evaluate(
-        (sel) => {
-          const btn = document.querySelector(sel) as HTMLButtonElement | null;
-          return btn !== null && !btn.disabled;
-        },
-        UNDO_BTN_SEL,
-      );
+    const bobUndoEnabled = await bobFrame!.evaluate(
+      (sel) => {
+        const btn = document.querySelector(sel) as HTMLButtonElement | null;
+        return btn !== null && !btn.disabled;
+      },
+      UNDO_BTN_SEL,
+    );
 
-      expect(aliceUndoEnabled).toBe(true);
-      expect(bobUndoEnabled).toBe(true);
-    } finally {
-      await browser.close();
-    }
+    expect(aliceUndoEnabled).toBe(true);
+    expect(bobUndoEnabled).toBe(true);
   },
 );
 
 
 test(
   'canvas architecture: document text is not accessible via standard DOM queries — explicit proof',
-  async () => {
+  async ({ browser }) => {
     // This test documents a hard architectural limit, not a bug.
     // It exists so that during an interview the claim "we cannot read canvas text
     // via DOM" is backed by a passing test, not just an assertion in conversation.
 
-    const browser = await chromium.launch();
-    try {
-      const page = await (await browser.newContext()).newPage();
-      await page.goto(editorUrl('uid-test-canvas'), { waitUntil: 'load' });
-      await waitForEditorReady(page);
+    const page = await (await browser.newContext()).newPage();
+    await page.goto(editorUrl('uid-test-canvas'), { waitUntil: 'load' });
+    await waitForEditorReady(page);
 
-      const probe = `PROBE${Date.now()}`;
-      await typeInEditor(page, probe);
-      await waitForSaved(page);
+    const probe = `PROBE${Date.now()}`;
+    await typeInEditor(page, probe);
+    await waitForSaved(page);
 
-      const frame = page.frame({ name: 'frameEditor' });
-      expect(frame).not.toBeNull();
+    const frame = page.frame({ name: 'frameEditor' });
+    expect(frame).not.toBeNull();
 
-      // ── ASSERTION 1: The canvas render surface exists and is non-zero ──────
-      // The document is being painted here. Content is present — just as pixels.
-      const viewerDimensions = await frame!.evaluate(
-        (id) => {
-          const c = document.getElementById(id) as HTMLCanvasElement | null;
-          return c ? { width: c.width, height: c.height } : null;
-        },
-        CANVAS_VIEWER_ID,
-      );
-      expect(viewerDimensions).not.toBeNull();
-      expect(viewerDimensions!.width).toBeGreaterThan(0);
-      expect(viewerDimensions!.height).toBeGreaterThan(0);
+    // ── ASSERTION 1: The canvas render surface exists and is non-zero ──────
+    // The document is being painted here. Content is present — just as pixels.
+    const viewerDimensions = await frame!.evaluate(
+      (id) => {
+        const c = document.getElementById(id) as HTMLCanvasElement | null;
+        return c ? { width: c.width, height: c.height } : null;
+      },
+      CANVAS_VIEWER_ID,
+    );
+    expect(viewerDimensions).not.toBeNull();
+    expect(viewerDimensions!.width).toBeGreaterThan(0);
+    expect(viewerDimensions!.height).toBeGreaterThan(0);
 
-      // ── ASSERTION 2: Standard DOM text queries return nothing useful ────────
-      // In Etherpad, body#innerdocbody.innerText returns the full document text.
-      // Here, querying the frame body for the probe string finds nothing — the
-      // document content does not exist as DOM text nodes at all.
-      const domProbeResult = await frame!.evaluate(
-        ({ probeStr }) => {
-          // Approach 1: innerText of body — contains toolbar labels, not doc content
-          if (document.body.innerText.includes(probeStr))
-            return { found: true, via: 'body.innerText' };
+    // ── ASSERTION 2: Standard DOM text queries return nothing useful ────────
+    // In Etherpad, body#innerdocbody.innerText returns the full document text.
+    // Here, querying the frame body for the probe string finds nothing — the
+    // document content does not exist as DOM text nodes at all.
+    const domProbeResult = await frame!.evaluate(
+      ({ probeStr }) => {
+        // Approach 1: innerText of body — contains toolbar labels, not doc content
+        if (document.body.innerText.includes(probeStr))
+          return { found: true, via: 'body.innerText' };
 
-          // Approach 2: Etherpad-style innerdocbody — this element does not exist
-          const innerdocbody = document.getElementById('innerdocbody');
-          if (innerdocbody?.innerText?.includes(probeStr))
-            return { found: true, via: 'innerdocbody' };
+        // Approach 2: Etherpad-style innerdocbody — this element does not exist
+        const innerdocbody = document.getElementById('innerdocbody');
+        if (innerdocbody?.innerText?.includes(probeStr))
+          return { found: true, via: 'innerdocbody' };
 
-          // Approach 3: canvas element textContent — always empty for <canvas>
-          const canvasText = document.getElementById('id_viewer')?.textContent ?? '';
-          if (canvasText.includes(probeStr))
-            return { found: true, via: 'canvas.textContent' };
+        // Approach 3: canvas element textContent — always empty for <canvas>
+        const canvasText = document.getElementById('id_viewer')?.textContent ?? '';
+        if (canvasText.includes(probeStr))
+          return { found: true, via: 'canvas.textContent' };
 
-          return { found: false, reason: 'canvas renders pixels, not DOM text nodes' };
-        },
-        { probeStr: probe },
-      );
+        return { found: false, reason: 'canvas renders pixels, not DOM text nodes' };
+      },
+      { probeStr: probe },
+    );
 
-      // This MUST be false: text typed into the editor is not in the DOM.
-      // A test author who queries document text by selector on an OnlyOffice
-      // editor will get silent false negatives — the text is there visually
-      // but absent from every DOM text node.
-      expect(domProbeResult.found).toBe(false);
+    // This MUST be false: text typed into the editor is not in the DOM.
+    // A test author who queries document text by selector on an OnlyOffice
+    // editor will get silent false negatives — the text is there visually
+    // but absent from every DOM text node.
+    expect(domProbeResult.found).toBe(false);
 
-      // ── ASSERTION 3: The keyboard shim confirmed the input was received ─────
-      // The textarea exists and processes keystrokes — the OT engine definitely
-      // received the input. The limitation is readback, not input delivery.
-      const captureExists = await frame!.evaluate(
-        (id) => document.getElementById(id) !== null,
-        KEYBOARD_CAPTURE_ID,
-      );
-      expect(captureExists).toBe(true);
+    // ── ASSERTION 3: The keyboard shim confirmed the input was received ─────
+    // The textarea exists and processes keystrokes — the OT engine definitely
+    // received the input. The limitation is readback, not input delivery.
+    const captureExists = await frame!.evaluate(
+      (id) => document.getElementById(id) !== null,
+      KEYBOARD_CAPTURE_ID,
+    );
+    expect(captureExists).toBe(true);
 
-      // ── ASSERTION 4: Undo button enabled → edit was processed by OT engine ──
-      const undoEnabled = await frame!.evaluate(
-        (sel) => {
-          const btn = document.querySelector(sel) as HTMLButtonElement | null;
-          return btn !== null && !btn.disabled;
-        },
-        UNDO_BTN_SEL,
-      );
-      expect(undoEnabled).toBe(true);
+    // ── ASSERTION 4: Undo button enabled → edit was processed by OT engine ──
+    const undoEnabled = await frame!.evaluate(
+      (sel) => {
+        const btn = document.querySelector(sel) as HTMLButtonElement | null;
+        return btn !== null && !btn.disabled;
+      },
+      UNDO_BTN_SEL,
+    );
+    expect(undoEnabled).toBe(true);
 
-      // ── What full content verification would require ────────────────────────
-      //
-      // Option A — OnlyOffice JS SDK (not confirmed in this exploration):
-      //   const text = await frame!.evaluate(() => {
-      //     // VERIFY: exact global name varies by DocumentServer version
-      //     // Candidates seen in source: window.DE, Asc.plugin, window.editor
-      //     return (window as any).DE?.GetDocumentContent?.();
-      //   });
-      //   expect(text).toContain(probe);
-      //
-      // Option B — download and parse (endpoint confirmed: /example/download?fileName=...):
-      //   const res = await page.request.get(`${BASE_URL}/download?fileName=${SAMPLE_DOC}`);
-      //   const buf = await res.body();
-      //   // .docx is a ZIP; word/document.xml inside contains raw paragraph XML
-      //   // Unzip and search the XML string for the probe value
-      //
-      // Option C — screenshot comparison (for rendering regressions, not content):
-      //   await expect(page).toHaveScreenshot('after-probe-typed.png');
-    } finally {
-      await browser.close();
-    }
+    // ── What full content verification would require ────────────────────────
+    //
+    // Option A — OnlyOffice JS SDK (not confirmed in this exploration):
+    //   const text = await frame!.evaluate(() => {
+    //     // VERIFY: exact global name varies by DocumentServer version
+    //     // Candidates seen in source: window.DE, Asc.plugin, window.editor
+    //     return (window as any).DE?.GetDocumentContent?.();
+    //   });
+    //   expect(text).toContain(probe);
+    //
+    // Option B — download and parse (endpoint confirmed: /example/download?fileName=...):
+    //   const res = await page.request.get(`${BASE_URL}/download?fileName=${SAMPLE_DOC}`);
+    //   const buf = await res.body();
+    //   // .docx is a ZIP; word/document.xml inside contains raw paragraph XML
+    //   // Unzip and search the XML string for the probe value
+    //
+    // Option C — screenshot comparison (for rendering regressions, not content):
+    //   await expect(page).toHaveScreenshot('after-probe-typed.png');
   },
 );
